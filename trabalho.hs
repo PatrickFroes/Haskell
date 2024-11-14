@@ -1,0 +1,155 @@
+import Data.Maybe (fromMaybe)
+import Control.Monad (replicateM)
+import Data.List (nub)
+import Data.Char (isSpace)
+
+-- Tipo de dados para representar expressões lógicas proposicionais
+data Expressao
+    = Variavel Char              -- Variável proposicional
+    | Nao Expressao              -- Negação
+    | E Expressao Expressao      -- Conjunção
+    | Ou Expressao Expressao     -- Disjunção
+    | Implica Expressao Expressao -- Implicação
+    | Bicondicional Expressao Expressao -- Bicondicional
+    deriving (Eq, Show)
+
+-- Função para avaliar uma expressão lógica em um dado ambiente de variáveis
+avaliar :: [(Char, Bool)] -> Expressao -> Bool
+avaliar ambiente (Variavel x) = fromMaybe False (lookup x ambiente)
+avaliar ambiente (Nao e) = not (avaliar ambiente e)
+avaliar ambiente (E e1 e2) = avaliar ambiente e1 && avaliar ambiente e2
+avaliar ambiente (Ou e1 e2) = avaliar ambiente e1 || avaliar ambiente e2
+avaliar ambiente (Implica e1 e2) = not (avaliar ambiente e1) || avaliar ambiente e2
+avaliar ambiente (Bicondicional e1 e2) = avaliar ambiente e1 == avaliar ambiente e2
+
+-- Gera todas as interpretações possíveis para um conjunto de variáveis
+todasInterpretes :: [Char] -> [[(Char, Bool)]]
+todasInterpretes variaveis = map (zip variaveis) (replicateM (length variaveis) [True, False])
+
+-- Classifica uma expressão como tautologia, contradição ou contingente
+classificarExpressao :: Expressao -> String
+classificarExpressao expressao =
+    let variaveis = nub (coletarVariaveis expressao)
+        interpretacoes = todasInterpretes variaveis
+        resultados = map (\i -> avaliar i expressao) interpretacoes
+    in case (all id resultados, any id resultados) of
+        (True, _) -> "A expressão é uma Tautologia (verdadeira em todas as interpretações)"
+        (False, False) -> "A expressão é uma Contradição (falsa em todas as interpretações)"
+        _ -> "A expressão é Contingente (verdadeira em algumas interpretações e falsa em outras)"
+
+-- Coleta todas as variáveis em uma expressão
+coletarVariaveis :: Expressao -> [Char]
+coletarVariaveis (Variavel x) = [x]
+coletarVariaveis (Nao e) = coletarVariaveis e
+coletarVariaveis (E e1 e2) = coletarVariaveis e1 ++ coletarVariaveis e2
+coletarVariaveis (Ou e1 e2) = coletarVariaveis e1 ++ coletarVariaveis e2
+coletarVariaveis (Implica e1 e2) = coletarVariaveis e1 ++ coletarVariaveis e2
+coletarVariaveis (Bicondicional e1 e2) = coletarVariaveis e1 ++ coletarVariaveis e2
+
+-- Função para conversão de expressão em Forma Normal Conjuntiva (CNF)
+-- Esta função é uma simplificação e pode ser expandida para uma conversão completa
+paraCNF :: Expressao -> Expressao
+paraCNF (Nao (E e1 e2)) = Ou (Nao (paraCNF e1)) (Nao (paraCNF e2))
+paraCNF (Nao (Ou e1 e2)) = E (Nao (paraCNF e1)) (Nao (paraCNF e2))
+paraCNF (E e1 e2) = E (paraCNF e1) (paraCNF e2)
+paraCNF (Ou e1 e2) = Ou (paraCNF e1) (paraCNF e2)
+paraCNF (Implica e1 e2) = Ou (Nao (paraCNF e1)) (paraCNF e2)
+paraCNF (Bicondicional e1 e2) = E (Implica (paraCNF e1) (paraCNF e2)) (Implica (paraCNF e2) (paraCNF e1))
+paraCNF e = e
+
+-- Tenta converter uma expressão em um conjunto de cláusulas de Horn
+paraClausulasDeHorn :: Expressao -> Either String [Expressao]
+paraClausulasDeHorn expressao = 
+    let expressaoCNF = paraCNF expressao
+    in if eDeHorn expressaoCNF
+       then Right (extrairClausulas expressaoCNF)
+       else Left "A expressão não pode ser representada em cláusulas de Horn"
+
+-- Verifica se uma expressão em CNF é uma expressão de Horn
+eDeHorn :: Expressao -> Bool
+eDeHorn (Ou (Nao _) _) = True
+eDeHorn (E e1 e2) = eDeHorn e1 && eDeHorn e2
+eDeHorn _ = False
+
+-- Extrai cláusulas de uma expressão em CNF
+extrairClausulas :: Expressao -> [Expressao]
+extrairClausulas (E e1 e2) = extrairClausulas e1 ++ extrairClausulas e2
+extrairClausulas e = [e]
+
+-- Função de análise (parser) para interpretar uma string em uma expressão lógica
+parseExpressao :: String -> Expressao
+parseExpressao entrada = 
+    let (expressao, _) = parseOu (filter (not . isSpace) entrada)
+    in expressao
+
+-- Funções de parsing para cada operador, seguindo a precedência
+parseOu :: String -> (Expressao, String)
+parseOu s = 
+    let (e1, rest) = parseE s
+    in case rest of
+        'v':xs -> let (e2, rest') = parseOu xs in (Ou e1 e2, rest')
+        _      -> (e1, rest)
+
+parseE :: String -> (Expressao, String)
+parseE s =
+    let (e1, rest) = parseNao s
+    in case rest of
+        '^':xs -> let (e2, rest') = parseE xs in (E e1 e2, rest')
+        _      -> (e1, rest)
+
+parseNao :: String -> (Expressao, String)
+parseNao ('~':s) = 
+    let (e, rest) = parseNao s
+    in (Nao e, rest)
+parseNao s = parseImplica s
+
+parseImplica :: String -> (Expressao, String)
+parseImplica s =
+    let (e1, rest) = parseBicondicional s
+    in case rest of
+        '=':'>':xs -> let (e2, rest') = parseImplica xs in (Implica e1 e2, rest')
+        _          -> (e1, rest)
+
+parseBicondicional :: String -> (Expressao, String)
+parseBicondicional s =
+    let (e1, rest) = parseTermo s
+    in case rest of
+        '<':'=':'>':xs -> let (e2, rest') = parseBicondicional xs in (Bicondicional e1 e2, rest')
+        _              -> (e1, rest)
+
+-- Parsing de termos, incluindo parênteses e variáveis
+parseTermo :: String -> (Expressao, String)
+parseTermo ('(':s) = 
+    let (e, rest) = parseOu s
+    in case rest of
+        ')':xs -> (e, xs)  -- Corrige o tratamento para parênteses fechados
+        _      -> error "Erro de sintaxe: Parêntese não fechado"
+parseTermo (x:xs)
+    | x >= 'A' && x <= 'Z' = (Variavel x, xs)  -- Variáveis de A-Z
+    | otherwise = error $ "Erro de sintaxe: Caractere inválido: " ++ [x]
+parseTermo [] = error "Erro de sintaxe: Expressão incompleta"
+
+-- Exibe a expressão formatada em LaTeX
+expressaoParaLatex :: Expressao -> String
+expressaoParaLatex (Variavel x) = [x]
+expressaoParaLatex (Nao e) = "¬" ++ expressaoParaLatex e
+expressaoParaLatex (E e1 e2) = "(" ++ expressaoParaLatex e1 ++ " ∧ " ++ expressaoParaLatex e2 ++ ")"
+expressaoParaLatex (Ou e1 e2) = "(" ++ expressaoParaLatex e1 ++ " ∨ " ++ expressaoParaLatex e2 ++ ")"
+expressaoParaLatex (Implica e1 e2) = "(" ++ expressaoParaLatex e1 ++ " → " ++ expressaoParaLatex e2 ++ ")"
+expressaoParaLatex (Bicondicional e1 e2) = "(" ++ expressaoParaLatex e1 ++ " ↔ " ++ expressaoParaLatex e2 ++ ")"
+
+-- Função principal para interação
+main :: IO ()
+main = do
+    let inputExpressao = "(B^C)=>A"  -- Substitua por qualquer expressão lógica
+    let expressao = parseExpressao inputExpressao
+    putStrLn $ "Expressão lógica: " ++ inputExpressao
+    putStrLn $ "Expressão em LaTeX: $$" ++ expressaoParaLatex expressao ++ "$$"
+    putStrLn $ "Classificação: " ++ classificarExpressao expressao
+    let expressaoCNF = paraCNF expressao
+    putStrLn $ "Forma Normal Conjuntiva (CNF): $$" ++ expressaoParaLatex expressaoCNF ++ "$$"
+    case paraClausulasDeHorn expressao of
+        Right clausulas -> do
+            putStrLn "Cláusulas de Horn equivalentes:"
+            mapM_ (putStrLn . expressaoParaLatex) clausulas
+        Left motivo -> putStrLn $ "Conversão para cláusulas de Horn não é possível: " ++ motivo
