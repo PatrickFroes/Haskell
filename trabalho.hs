@@ -1,28 +1,29 @@
-import Data.Maybe (fromMaybe)
 import Control.Monad (replicateM)
 import Data.List (nub)
 import Data.Char (isSpace)
 
 -- Tipo de dados para representar expressões lógicas proposicionais
 data Expressao
-    = Variavel Char              -- Variável proposicional
-    | Nao Expressao              -- Negação
-    | E Expressao Expressao      -- Conjunção
-    | Ou Expressao Expressao     -- Disjunção
-    | Implica Expressao Expressao -- Implicação
+    = Variavel Char                     -- Variável proposicional
+    | Nao Expressao                     -- Negação
+    | E Expressao Expressao             -- Conjunção
+    | Ou Expressao Expressao            -- Disjunção
+    | Implica Expressao Expressao       -- Implicação
     | Bicondicional Expressao Expressao -- Bicondicional
     deriving (Eq, Show)
 
--- Função para avaliar uma expressão lógica em um dado ambiente de variáveis
+-- Função que avalia uma expressão lógica em variáveis
 avaliar :: [(Char, Bool)] -> Expressao -> Bool
-avaliar ambiente (Variavel x) = fromMaybe False (lookup x ambiente)
+avaliar ambiente (Variavel x) = case lookup x ambiente of
+    Just valor -> valor
+    Nothing -> False
 avaliar ambiente (Nao e) = not (avaliar ambiente e)
 avaliar ambiente (E e1 e2) = avaliar ambiente e1 && avaliar ambiente e2
 avaliar ambiente (Ou e1 e2) = avaliar ambiente e1 || avaliar ambiente e2
 avaliar ambiente (Implica e1 e2) = not (avaliar ambiente e1) || avaliar ambiente e2
 avaliar ambiente (Bicondicional e1 e2) = avaliar ambiente e1 == avaliar ambiente e2
 
--- Gera todas as interpretações possíveis para um conjunto de variáveis
+-- Gera todas as interpretações possíveis para um conjunto de variáveis ("Tabela verdade")
 todasInterpretes :: [Char] -> [[(Char, Bool)]]
 todasInterpretes variaveis = map (zip variaveis) (replicateM (length variaveis) [True, False])
 
@@ -37,7 +38,7 @@ classificarExpressao expressao =
         (False, False) -> "A expressão é uma Contradição (falsa em todas as interpretações)"
         _ -> "A expressão é Contingente (verdadeira em algumas interpretações e falsa em outras)"
 
--- Coleta todas as variáveis em uma expressão
+-- Pega todas as variáveis em uma expressão
 coletarVariaveis :: Expressao -> [Char]
 coletarVariaveis (Variavel x) = [x]
 coletarVariaveis (Nao e) = coletarVariaveis e
@@ -46,32 +47,31 @@ coletarVariaveis (Ou e1 e2) = coletarVariaveis e1 ++ coletarVariaveis e2
 coletarVariaveis (Implica e1 e2) = coletarVariaveis e1 ++ coletarVariaveis e2
 coletarVariaveis (Bicondicional e1 e2) = coletarVariaveis e1 ++ coletarVariaveis e2
 
--- Função para conversão de expressão em Forma Normal Conjuntiva (CNF)
--- Esta função é uma simplificação e pode ser expandida para uma conversão completa
-paraCNF :: Expressao -> Expressao
-paraCNF (Nao (E e1 e2)) = Ou (Nao (paraCNF e1)) (Nao (paraCNF e2))
-paraCNF (Nao (Ou e1 e2)) = E (Nao (paraCNF e1)) (Nao (paraCNF e2))
-paraCNF (E e1 e2) = E (paraCNF e1) (paraCNF e2)
-paraCNF (Ou e1 e2) = Ou (paraCNF e1) (paraCNF e2)
-paraCNF (Implica e1 e2) = Ou (Nao (paraCNF e1)) (paraCNF e2)
-paraCNF (Bicondicional e1 e2) = E (Implica (paraCNF e1) (paraCNF e2)) (Implica (paraCNF e2) (paraCNF e1))
-paraCNF e = e
+-- Função para converter de expressão em Forma Normal Conjuntiva (FNC)
+paraFNC :: Expressao -> Expressao
+paraFNC (Nao (E e1 e2)) = Ou (Nao (paraFNC e1)) (Nao (paraFNC e2))
+paraFNC (Nao (Ou e1 e2)) = E (Nao (paraFNC e1)) (Nao (paraFNC e2))
+paraFNC (E e1 e2) = E (paraFNC e1) (paraFNC e2)
+paraFNC (Ou e1 e2) = Ou (paraFNC e1) (paraFNC e2)
+paraFNC (Implica e1 e2) = Ou (Nao (paraFNC e1)) (paraFNC e2)
+paraFNC (Bicondicional e1 e2) = E (Implica (paraFNC e1) (paraFNC e2)) (Implica (paraFNC e2) (paraFNC e1))
+paraFNC e = e
 
 -- Tenta converter uma expressão em um conjunto de cláusulas de Horn
 paraClausulasDeHorn :: Expressao -> Either String [Expressao]
 paraClausulasDeHorn expressao = 
-    let expressaoCNF = paraCNF expressao
-    in if eDeHorn expressaoCNF
-       then Right (extrairClausulas expressaoCNF)
+    let expressaoFNC = paraFNC expressao
+    in if eDeHorn expressaoFNC
+       then Right (extrairClausulas expressaoFNC)
        else Left "A expressão não pode ser representada em cláusulas de Horn"
 
--- Verifica se uma expressão em CNF é uma expressão de Horn
+-- Verifica se uma expressão em FNC é uma expressão de Horn
 eDeHorn :: Expressao -> Bool
 eDeHorn (Ou (Nao _) _) = True
 eDeHorn (E e1 e2) = eDeHorn e1 && eDeHorn e2
 eDeHorn _ = False
 
--- Extrai cláusulas de uma expressão em CNF
+-- Extrai cláusulas de uma expressão em FNC
 extrairClausulas :: Expressao -> [Expressao]
 extrairClausulas (E e1 e2) = extrairClausulas e1 ++ extrairClausulas e2
 extrairClausulas e = [e]
@@ -122,7 +122,7 @@ parseTermo :: String -> (Expressao, String)
 parseTermo ('(':s) = 
     let (e, rest) = parseOu s
     in case rest of
-        ')':xs -> (e, xs)  -- Corrige o tratamento para parênteses fechados
+        ')':xs -> (e, xs)
         _      -> error "Erro de sintaxe: Parêntese não fechado"
 parseTermo (x:xs)
     | x >= 'A' && x <= 'Z' = (Variavel x, xs)  -- Variáveis de A-Z
@@ -141,15 +141,15 @@ expressaoParaLatex (Bicondicional e1 e2) = "(" ++ expressaoParaLatex e1 ++ " ↔
 -- Função principal para interação
 main :: IO ()
 main = do
-    let inputExpressao = "(B^C)=>A"  -- Substitua por qualquer expressão lógica
+    let inputExpressao = "(B^C)=>A" 
     let expressao = parseExpressao inputExpressao
     putStrLn $ "Expressão lógica: " ++ inputExpressao
     putStrLn $ "Expressão em LaTeX: $$" ++ expressaoParaLatex expressao ++ "$$"
     putStrLn $ "Classificação: " ++ classificarExpressao expressao
-    let expressaoCNF = paraCNF expressao
-    putStrLn $ "Forma Normal Conjuntiva (CNF): $$" ++ expressaoParaLatex expressaoCNF ++ "$$"
+    let expressaoFNC = paraFNC expressao
+    putStrLn $ "Forma Normal Conjuntiva (FNC): $$" ++ expressaoParaLatex expressaoFNC ++ "$$"
     case paraClausulasDeHorn expressao of
         Right clausulas -> do
-            putStrLn "Cláusulas de Horn equivalentes:"
+            putStrLn "Cláusula de Horn:"
             mapM_ (putStrLn . expressaoParaLatex) clausulas
-        Left motivo -> putStrLn $ "Conversão para cláusulas de Horn não é possível: " ++ motivo
+            
